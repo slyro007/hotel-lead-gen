@@ -21,3 +21,5 @@ next-env.d.ts
 
 # os / editor
 .DS_Store
+.env*
+!.env.example
