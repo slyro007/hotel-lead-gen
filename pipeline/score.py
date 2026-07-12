@@ -25,7 +25,8 @@ import argparse
 import json
 import logging
 
-from common import days_in_quarter, finish_run, get_conn, parse_period, quarter_index, start_run
+from common import (days_in_quarter, finish_run, get_conn, parse_period, prev_quarter,
+                    quarter_index, start_run)
 
 log = logging.getLogger("score")
 
@@ -121,7 +122,31 @@ def load_benchmarks(conn) -> dict:
     return out
 
 
-def pick_compset(benchmarks: dict, year: int, quarter: int, city: str | None,
+def segment_over_window(benchmarks: dict, window_qis: list[int],
+                        geo: str, band: str, bclass: str) -> dict | None:
+    """Comp stats for one segment averaged over EXACTLY the quarters in the
+    hotel's own trailing window — apples-to-apples regardless of seasonality
+    or how short the hotel's (or the dataset's) history is."""
+    medians, p25s, counts = [], [], []
+    for qi in window_qis:
+        y, q = qi // 4, qi % 4 + 1
+        bm = benchmarks.get((y, q, geo, band, bclass))
+        if not bm or not bm["median"]:
+            return None  # segment must cover every quarter the hotel filed
+        medians.append(bm["median"])
+        counts.append(bm["count"])
+        if bm["p25"]:
+            p25s.append(bm["p25"])
+    if not medians:
+        return None
+    return {
+        "median": sum(medians) / len(medians),
+        "p25": sum(p25s) / len(p25s) if p25s else None,
+        "count": min(counts),
+    }
+
+
+def pick_compset(benchmarks: dict, window_qis: list[int], city: str | None,
                  band: str | None, bclass: str | None) -> tuple[str, dict] | None:
     """Fallback chain: tightest segment with >= MIN_COMPSET properties."""
     geo_city = f"city:{city}" if city else None
@@ -138,7 +163,7 @@ def pick_compset(benchmarks: dict, year: int, quarter: int, city: str | None,
         chain.append((geo_city, "any", "any"))
     chain.append(("dallas_county", "any", "any"))
     for geo, b, c in chain:
-        bm = benchmarks.get((year, quarter, geo, b, c))
+        bm = segment_over_window(benchmarks, window_qis, geo, b, c)
         if bm and bm["count"] >= MIN_COMPSET and bm["median"]:
             return f"{geo}|{b}|{c}", bm
     return None
@@ -147,14 +172,14 @@ def pick_compset(benchmarks: dict, year: int, quarter: int, city: str | None,
 # ---------------------------------------------------------------- per-hotel math
 
 def trailing_revpar(filings: list[dict], end_qi: int, rooms: int, n: int = 4
-                    ) -> tuple[float | None, float | None, int]:
-    """(revpar, revenue, days) over up to n quarters ending at end_qi (inclusive)."""
+                    ) -> tuple[float | None, float | None, int, list[int]]:
+    """(revpar, revenue, days, window_qis) over up to n quarters ending at end_qi."""
     window = [f for f in filings if end_qi - n < f["qi"] <= end_qi and f["receipts"]]
     if not window or not rooms:
-        return None, None, 0
+        return None, None, 0, []
     revenue = sum(f["receipts"] for f in window)
     day_count = sum(f["days"] for f in window)
-    return revenue / (rooms * day_count), revenue, day_count
+    return revenue / (rooms * day_count), revenue, day_count, sorted(f["qi"] for f in window)
 
 
 def ols_slope_pct(filings: list[dict], end_qi: int, rooms: int, n: int = 8) -> float | None:
@@ -184,14 +209,23 @@ def score_hotel(h: dict, filings: list[dict], benchmarks: dict,
     if not rooms or rooms < MIN_ROOMS:
         return None
 
-    t_revpar, t_revenue, t_days = trailing_revpar(filings, end_qi, rooms)
-    prior_revpar, prior_revenue, prior_days = trailing_revpar(filings, end_qi - 4, rooms)
+    # distress: stopped filing (vs dataset's own latest quarter). Computed
+    # first because a stopped hotel's performance windows should end at its
+    # LAST filed quarter — otherwise its history is invisible to the score.
+    last_filed_qi = max((f["qi"] for f in filings), default=None)
+    quarters_since = dataset_max_qi - last_filed_qi if last_filed_qi is not None else None
+    stopped = quarters_since is not None and quarters_since >= 1
+    eff_end_qi = min(end_qi, last_filed_qi) if last_filed_qi is not None else end_qi
+
+    t_revpar, t_revenue, t_days, window_qis = trailing_revpar(filings, eff_end_qi, rooms)
+    prior_revpar, prior_revenue, prior_days, _ = trailing_revpar(filings, eff_end_qi - 4, rooms)
     latest = next((f for f in sorted(filings, key=lambda x: -x["qi"]) if f["receipts"]), None)
     latest_revpar = latest["receipts"] / (rooms * latest["days"]) if latest else None
 
-    # comp set + index
+    # comp set + index — averaged over the hotel's own window quarters, so
+    # stopped hotels are compared against the market as of when they operated
     band = room_band(rooms)
-    comp = pick_compset(benchmarks, year, quarter, h["city"], band, h["brand_class"])
+    comp = pick_compset(benchmarks, window_qis, h["city"], band, h["brand_class"])
     revpar_index = None
     comp_key, comp_count, comp_p25 = None, None, None
     if comp and t_revpar:
@@ -206,16 +240,11 @@ def score_hotel(h: dict, filings: list[dict], benchmarks: dict,
     yoy = None
     if t_revenue and prior_revenue and t_days and prior_days >= 180:
         yoy = 100 * ((t_revenue / t_days) / (prior_revenue / prior_days) - 1)
-    slope = ols_slope_pct(filings, end_qi, rooms)
+    slope = ols_slope_pct(filings, eff_end_qi, rooms)
 
     # recovery vs 2019
-    revpar_2019, _, _ = trailing_revpar(filings, quarter_index(2019, 4), rooms)
+    revpar_2019, _, _, _ = trailing_revpar(filings, quarter_index(2019, 4), rooms)
     recovery = t_revpar / revpar_2019 if (t_revpar and revpar_2019) else None
-
-    # distress: stopped filing (vs dataset's own latest quarter)
-    last_filed_qi = max((f["qi"] for f in filings), default=None)
-    quarters_since = dataset_max_qi - last_filed_qi if last_filed_qi is not None else None
-    stopped = quarters_since is not None and quarters_since >= 1
 
     # single-quarter collapse: latest filed quarter vs same quarter prior year
     collapse = False
