@@ -1,0 +1,23 @@
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# pipeline working data (raw downloads, parsed JSON, review CSVs)
+data/
+
+# node / next (web/)
+node_modules/
+.next/
+next-env.d.ts
+
+# vercel
+.vercel
+
+# os / editor
+.DS_Store
