@@ -28,6 +28,12 @@ from common import DOWNLOADS_DIR, ensure_dirs
 log = logging.getLogger("dcad_fetch")
 
 DATA_PRODUCTS_URL = "https://www.dallascad.org/DataProducts.aspx"
+# Direct handler URL discovered 2026-07 (works even when DataProducts.aspx
+# errors). Bump the year in the filename for future rolls.
+CURRENT_ZIP_URL = (
+    "https://www.dallascad.org/ViewPDFs.aspx?type=3&id="
+    "%5C%5CDCAD.ORG%5CWEB%5CWEBDATA%5CWEBFORMS%5CDATA%20PRODUCTS%5CDCAD2026_CURRENT.ZIP"
+)
 DCAD_DIR = os.path.join(DOWNLOADS_DIR, "dcad")
 
 
@@ -64,16 +70,22 @@ def main() -> None:
     if args.url:
         dest = download(args.url)
     else:
-        resp = requests.get(DATA_PRODUCTS_URL, timeout=60,
-                            headers={"User-Agent": "Mozilla/5.0"})
-        resp.raise_for_status()
-        links = find_zip_links(resp.text)
-        if not links:
-            raise SystemExit(
-                "No .zip links found on the Data Products page — download manually "
-                f"from {DATA_PRODUCTS_URL} into {DCAD_DIR} and run dcad_match.py.")
-        log.info("Found %d zip link(s); taking the first: %s", len(links), links[0])
-        dest = download(links[0])
+        # Try the page scrape first (keeps us current across years), fall back
+        # to the known direct handler URL — the page errors out routinely.
+        dest = None
+        try:
+            resp = requests.get(DATA_PRODUCTS_URL, timeout=60,
+                                headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+            links = find_zip_links(resp.text)
+            if links:
+                log.info("Found %d zip link(s); taking the first: %s", len(links), links[0])
+                dest = download(links[0])
+        except requests.RequestException as e:
+            log.warning("Data Products page unavailable (%s)", e)
+        if dest is None:
+            log.info("Falling back to the direct DCAD2026_CURRENT.ZIP handler URL.")
+            dest = download(CURRENT_ZIP_URL)
 
     out_dir = os.path.join(DCAD_DIR, os.path.splitext(os.path.basename(dest))[0])
     with zipfile.ZipFile(dest) as z:
