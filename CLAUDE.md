@@ -34,6 +34,7 @@ manual adjudication — never guessed into the DB).
 .venv/bin/python pipeline/geocode.py                                 # 4. Census batch geocoder → lat/lng
 .venv/bin/python pipeline/classify_brands.py                         # 5. Claude Batches → brand/independent
 .venv/bin/python pipeline/dcad_fetch.py && .venv/bin/python pipeline/dcad_match.py  # 6. DCAD owners/values
+.venv/bin/python pipeline/franchise_lookup.py                        # 6b. free Comptroller franchise-tax → registered agent/officers
 .venv/bin/python pipeline/socrata_market.py                          # 7. city/county HOT market stats
 .venv/bin/python pipeline/score.py                                   # 8. benchmarks + lead scores
 ```

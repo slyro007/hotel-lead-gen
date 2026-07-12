@@ -6,6 +6,7 @@ import { forwardRef } from "react";
 import type { HotelListRow } from "../../../db/queries/hotels";
 import { fmtInt, fmtMoney, fmtPct, toNum } from "../../../lib/format";
 import { isUnderperforming, scoreBand } from "../../../lib/score-labels";
+import { cardHeadline } from "../../../lib/verdict";
 import { Sparkline } from "../../_components/charts";
 import { Badge, ScoreChip } from "../../_components/score-chip";
 
@@ -100,6 +101,10 @@ export const LeadCard = forwardRef<HTMLAnchorElement, LeadCardProps>(function Le
             </div>
           </div>
 
+          <p className="mt-1.5 text-[12px] leading-snug text-foreground/80">
+            {cardHeadline(row)}
+          </p>
+
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {row.stoppedFiling && <Badge tone="red">stopped filing</Badge>}
             {isUnderperforming(idx) && <Badge tone="red">underperforming</Badge>}
@@ -110,7 +115,7 @@ export const LeadCard = forwardRef<HTMLAnchorElement, LeadCardProps>(function Le
           <div className="mt-2">
             <IndexBullet index={idx} />
             <div className="mt-1 flex items-center justify-between text-[11px] text-ink-muted">
-              <span>RevPAR index</span>
+              <span>vs. similar hotels</span>
               <span className="tabular-nums text-foreground">{idx?.toFixed(0) ?? "—"}</span>
             </div>
           </div>

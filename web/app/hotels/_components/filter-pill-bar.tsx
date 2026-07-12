@@ -221,6 +221,11 @@ export function FilterPillBar({
         <span className="text-ink-muted">
           <span className="font-medium text-foreground tabular-nums">{count}</span> hotels
         </span>
+        <span className="text-zinc-300 dark:text-zinc-700">|</span>
+        <span className="text-ink-muted">
+          Score <span className="font-medium text-hot">70+</span> = strong lead · a red bar means it
+          earns below similar hotels nearby
+        </span>
         {activeChips.length > 0 && (
           <>
             <span className="text-zinc-300 dark:text-zinc-700">|</span>

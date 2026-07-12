@@ -19,15 +19,18 @@ export async function GET(req: NextRequest) {
   const header = [
     "name", "address", "city", "zip", "rooms", "brand_class", "brand_family",
     "lead_score", "revpar_index", "trailing_revenue_4q", "yoy_pct",
-    "stopped_filing", "owner_name",
+    "stopped_filing", "owner_name", "owner_mailing_address", "registered_agent",
   ];
   const lines = [header.join(",")];
   for (const r of rows) {
+    const mailing = r.ownerAddress
+      ? `${r.ownerAddress}, ${r.ownerCity ?? ""} ${r.ownerState ?? ""} ${r.ownerZip ?? ""}`.trim()
+      : "";
     lines.push(
       [
         r.name, r.address, r.city, r.zip, r.rooms, r.brandClass, r.brandFamily,
         r.leadScore, r.revparIndex, r.trailingRevenue, r.yoy,
-        r.stoppedFiling ? "yes" : "", r.ownerName,
+        r.stoppedFiling ? "yes" : "", r.ownerName, mailing, r.registeredAgentName,
       ]
         .map(csvCell)
         .join(",")

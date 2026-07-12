@@ -14,8 +14,10 @@ owner with a problem. Those are the leads.
 
 ## Product rules
 
-1. **Verdict first.** Every hotel gets a lead score (0–100) and a one-line
-   reason. The list ranks by score; the detail panel proves the number.
+1. **Verdict first.** Every hotel gets a lead score (0–100) and a plain-English
+   verdict — a one-line headline plus a "What this means" summary and signal
+   bullets (`web/lib/verdict.ts`, rule-based, no LLM). The list ranks by score;
+   the detail panel proves the number.
 2. **Honest about estimates.** RevPAR here is *implied* from tax filings
    (receipts ÷ rooms ÷ days), not observed from a PMS. Rooms are self-reported.
    The UI says "implied," shows the inputs, and never fakes precision.
@@ -24,8 +26,12 @@ owner with a problem. Those are the leads.
    `score_breakdown` — an operator can audit any number back to the filings.
 4. **The export is the product.** The end state of a session is a CSV of
    scored hotels with owner names and mailing addresses, ready for outreach.
-5. **Operator-grade, not consumer.** Dense tables, keyboard-friendly, no
-   onboarding. One user (Danny) today; approval-gated Clerk auth for anyone else.
+5. **Readable by anyone.** The data is dense, but nobody should need hotel
+   expertise to use it. Every jargon term has a one-sentence plain definition
+   (`web/lib/glossary.ts`, surfaced via `<InfoTip>` and the `/help` page), every
+   hotel leads with a plain verdict, and captions explain each chart/number.
+   Still keyboard-friendly and fast; just no assumed vocabulary.
+6. **Operator-grade tooling.** Approval-gated Clerk auth; one user (Danny) today.
 
 ## The score (v1)
 

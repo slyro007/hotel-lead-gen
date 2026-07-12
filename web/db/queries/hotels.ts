@@ -89,6 +89,11 @@ export async function listHotels(f: HotelFilters) {
       yoy: hotelScores.yoyRevenueChangePct,
       stoppedFiling: hotelScores.stoppedFiling,
       ownerName: ownerEnrichment.ownerName,
+      ownerAddress: ownerEnrichment.ownerAddress,
+      ownerCity: ownerEnrichment.ownerCity,
+      ownerState: ownerEnrichment.ownerState,
+      ownerZip: ownerEnrichment.ownerZip,
+      registeredAgentName: sql<string | null>`${ownerEnrichment.registeredAgent}->>'name'`,
     })
     .from(hotels)
     .leftJoin(hotelScores, scoreJoinOn())

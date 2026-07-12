@@ -36,6 +36,17 @@ const NAV = [
       </>
     ),
   },
+  {
+    href: "/help",
+    label: "How it works",
+    match: (p: string) => p.startsWith("/help"),
+    icon: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .8-1 1.7M12 17h.01" />
+      </>
+    ),
+  },
 ];
 
 const itemBase =
