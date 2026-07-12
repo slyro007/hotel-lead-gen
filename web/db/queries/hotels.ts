@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../client";
 import { hotelFilings, hotelScores, hotels, ownerEnrichment } from "../schema";
 
@@ -24,6 +24,7 @@ export interface HotelFilters {
   rooms?: string; // 1-49 | 50-99 | 100-199 | 200+
   stopped?: string; // "1"
   q?: string; // name/address search
+  ids?: string; // comma-separated hotel ids (single-hotel export)
   limit?: number;
 }
 
@@ -52,6 +53,10 @@ function filterConditions(f: HotelFilters): SQL[] {
   if (f.rooms === "100-199") conds.push(sql`${hotels.rooms} between 100 and 199`);
   if (f.rooms === "200+") conds.push(sql`${hotels.rooms} >= 200`);
   if (f.stopped === "1") conds.push(eq(hotelScores.stoppedFiling, true));
+  if (f.ids) {
+    const list = f.ids.split(",").filter(Boolean);
+    if (list.length) conds.push(inArray(hotels.id, list));
+  }
   if (f.q) {
     const needle = `%${f.q}%`;
     const search = or(ilike(hotels.locationName, needle), ilike(hotels.address, needle));
@@ -93,6 +98,8 @@ export async function listHotels(f: HotelFilters) {
     .limit(Math.min(f.limit ?? 500, 2000));
 }
 
+export type HotelListRow = Awaited<ReturnType<typeof listHotels>>[number];
+
 export async function getHotel(id: string) {
   const rows = await db
     .select({
@@ -122,6 +129,54 @@ export async function getHotelFilings(hotelId: string) {
     .from(hotelFilings)
     .where(eq(hotelFilings.hotelId, hotelId))
     .orderBy(asc(hotelFilings.year), asc(hotelFilings.quarter));
+}
+
+export interface SeriesPoint {
+  year: number;
+  quarter: number;
+  receipts: number | null;
+  rooms: number | null;
+}
+
+/**
+ * Per-quarter filing series for a batch of hotels, in one round-trip. Feeds the
+ * lead-card and table sparklines. Fetches the flat rows (≤ shown hotels × ~6
+ * quarters) ordered by period, then groups by hotel id in JS. Returns a Map
+ * keyed by hotel id, each value ordered oldest→newest.
+ */
+export async function getHotelSeries(ids: string[]): Promise<Map<string, SeriesPoint[]>> {
+  const out = new Map<string, SeriesPoint[]>();
+  if (ids.length === 0) return out;
+
+  // Collapse to one point per hotel-quarter: a location can have multiple
+  // filings in a period (e.g. an ownership change mid-quarter). Sum receipts
+  // and keep the largest reported room count — mirrors pipeline/score.py.
+  const rows = await db
+    .select({
+      hotelId: hotelFilings.hotelId,
+      year: hotelFilings.year,
+      quarter: hotelFilings.quarter,
+      receipts: sql<string | null>`sum(${hotelFilings.roomReceipts})`,
+      rooms: sql<number | null>`max(${hotelFilings.rooms})`,
+    })
+    .from(hotelFilings)
+    .where(inArray(hotelFilings.hotelId, ids))
+    .groupBy(hotelFilings.hotelId, hotelFilings.year, hotelFilings.quarter)
+    .orderBy(asc(hotelFilings.year), asc(hotelFilings.quarter));
+
+  for (const r of rows) {
+    if (!r.hotelId) continue;
+    const point: SeriesPoint = {
+      year: r.year,
+      quarter: r.quarter,
+      receipts: r.receipts == null ? null : Number(r.receipts),
+      rooms: r.rooms == null ? null : Number(r.rooms),
+    };
+    const list = out.get(r.hotelId);
+    if (list) list.push(point);
+    else out.set(r.hotelId, [point]);
+  }
+  return out;
 }
 
 export async function listCities(): Promise<string[]> {

@@ -1,9 +1,11 @@
 "use client";
 
 import {
+  Area,
   Bar,
   BarChart,
   CartesianGrid,
+  ComposedChart,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -11,7 +13,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { fmtMoney, fmtRevpar } from "../../../lib/format";
+import { fmtInt, fmtMoney, fmtRevpar } from "../../../lib/format";
+import { axisProps, ChartTooltip, GRID } from "../../_components/charts";
 
 export interface TrendPoint {
   period: string; // "Q1 '25"
@@ -19,36 +22,6 @@ export interface TrendPoint {
   totalReceipts: number | null;
   totalRooms: number | null;
 }
-
-const GRID = "color-mix(in oklch, currentColor 12%, transparent)";
-const INK_MUTED = "color-mix(in oklch, currentColor 55%, transparent)";
-
-function ChartTooltip({
-  active,
-  payload,
-  label,
-  format,
-}: {
-  active?: boolean;
-  payload?: { value: number }[];
-  label?: string;
-  format: (v: number) => string;
-}) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-md border border-zinc-200 bg-background px-2.5 py-1.5 text-[12px] shadow-sm dark:border-zinc-800">
-      <div className="text-zinc-500 dark:text-zinc-400">{label}</div>
-      <div className="font-medium tabular-nums">{format(payload[0].value)}</div>
-    </div>
-  );
-}
-
-const axisProps = {
-  stroke: INK_MUTED,
-  fontSize: 11,
-  tickLine: false,
-  axisLine: false,
-} as const;
 
 /** Median implied RevPAR across the Dallas County comp universe, by quarter. */
 export function RevparTrendChart({ data }: { data: TrendPoint[] }) {
@@ -94,6 +67,38 @@ export function ReceiptsChart({ data }: { data: TrendPoint[] }) {
           maxBarSize={28}
         />
       </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Room supply (total rooms across active filers) by quarter. */
+export function SupplyChart({ data }: { data: TrendPoint[] }) {
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -8 }}>
+        <defs>
+          <linearGradient id="supplyFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--color-benchmark)" stopOpacity={0.25} />
+            <stop offset="100%" stopColor="var(--color-benchmark)" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid stroke={GRID} vertical={false} />
+        <XAxis dataKey="period" {...axisProps} interval="preserveStartEnd" />
+        <YAxis {...axisProps} tickFormatter={(v: number) => fmtInt(v)} width={52} />
+        <Tooltip
+          content={<ChartTooltip format={(v) => `${fmtInt(v)} rooms`} />}
+          cursor={{ stroke: GRID }}
+        />
+        <Area
+          type="monotone"
+          dataKey="totalRooms"
+          stroke="var(--color-benchmark)"
+          strokeWidth={2}
+          fill="url(#supplyFill)"
+          dot={false}
+          activeDot={{ r: 4 }}
+        />
+      </ComposedChart>
     </ResponsiveContainer>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Area,
   Bar,
   ComposedChart,
   CartesianGrid,
@@ -11,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { fmtMoney, fmtRevpar } from "../../../lib/format";
+import { axisProps, GRID } from "../../_components/charts";
 
 export interface FilingPoint {
   period: string;
@@ -18,16 +20,6 @@ export interface FilingPoint {
   revpar: number | null;
   benchmarkRevpar: number | null;
 }
-
-const GRID = "color-mix(in oklch, currentColor 12%, transparent)";
-const INK_MUTED = "color-mix(in oklch, currentColor 55%, transparent)";
-
-const axisProps = {
-  stroke: INK_MUTED,
-  fontSize: 11,
-  tickLine: false,
-  axisLine: false,
-} as const;
 
 function DetailTooltip({
   active,
@@ -41,14 +33,14 @@ function DetailTooltip({
   if (!active || !payload?.length) return null;
   const by = Object.fromEntries(payload.map((p) => [p.dataKey, p.value]));
   return (
-    <div className="rounded-md border border-zinc-200 bg-background px-2.5 py-1.5 text-[12px] shadow-sm dark:border-zinc-800">
-      <div className="text-zinc-500 dark:text-zinc-400">{label}</div>
+    <div className="rounded-md border border-border bg-background px-2.5 py-1.5 text-[12px] shadow-sm">
+      <div className="text-ink-muted">{label}</div>
       {by.receipts != null && (
         <div className="tabular-nums">Receipts: {fmtMoney(by.receipts)}</div>
       )}
       {by.revpar != null && <div className="tabular-nums">RevPAR: {fmtRevpar(by.revpar)}</div>}
       {by.benchmarkRevpar != null && (
-        <div className="tabular-nums text-blue-600 dark:text-blue-300">
+        <div className="tabular-nums text-benchmark">
           Comp median: {fmtRevpar(by.benchmarkRevpar)}
         </div>
       )}
@@ -56,20 +48,50 @@ function DetailTooltip({
   );
 }
 
-/** Quarterly RevPAR vs comp-set median. Blue = benchmark (DESIGN.md). */
+/**
+ * Quarterly RevPAR vs comp-set median. Blue dashed = benchmark; the hotel line
+ * is foreground ink, with a red fill in the gap wherever it sits *below* the
+ * benchmark (DESIGN.md: red = underperformance). `shortfall` is a derived
+ * series = benchmark value only in quarters where revpar < benchmark, so the
+ * area shades exactly the below-market region.
+ */
 export function RevparVsBenchmarkChart({ data }: { data: FilingPoint[] }) {
+  const withShortfall = data.map((d) => ({
+    ...d,
+    shortfall:
+      d.revpar != null && d.benchmarkRevpar != null && d.revpar < d.benchmarkRevpar
+        ? d.benchmarkRevpar
+        : d.revpar ?? null,
+    hasGap:
+      d.revpar != null && d.benchmarkRevpar != null && d.revpar < d.benchmarkRevpar,
+  }));
+  const anyGap = withShortfall.some((d) => d.hasGap);
+
   return (
     <ResponsiveContainer width="100%" height={240}>
-      <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+      <ComposedChart data={withShortfall} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
         <CartesianGrid stroke={GRID} vertical={false} />
         <XAxis dataKey="period" {...axisProps} interval="preserveStartEnd" />
         <YAxis {...axisProps} tickFormatter={(v: number) => `$${v}`} width={52} />
         <Tooltip content={<DetailTooltip />} cursor={{ stroke: GRID }} />
+        {/* Red band between the hotel line and the benchmark, below-market only. */}
+        {anyGap && (
+          <Area
+            type="monotone"
+            dataKey="shortfall"
+            stroke="none"
+            fill="var(--color-hot)"
+            fillOpacity={0.16}
+            baseValue="dataMin"
+            activeDot={false}
+            isAnimationActive={false}
+          />
+        )}
         <Line
           type="monotone"
           dataKey="benchmarkRevpar"
           name="Comp median"
-          stroke="var(--color-blue-500)"
+          stroke="var(--color-benchmark)"
           strokeWidth={2}
           strokeDasharray="4 3"
           dot={false}

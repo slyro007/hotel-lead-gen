@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getDataFreshness } from "../../db/queries/ingestion";
+import { getHotelSeries } from "../../db/queries/hotels";
 import {
   getMarketKpis,
   getMarketTrend,
@@ -8,21 +8,55 @@ import {
 } from "../../db/queries/market";
 import { requireApproved } from "../../lib/auth";
 import { fmtInt, fmtMoney, fmtPct, fmtQuarter, fmtRevpar, toNum } from "../../lib/format";
+import { impliedRevpar } from "../../lib/quarter";
+import { Sparkline } from "../_components/charts";
 import { EmptyState, NotApproved } from "../_components/not-approved";
 import { ScoreChip } from "../_components/score-chip";
-import { ReceiptsChart, RevparTrendChart, type TrendPoint } from "./_components/market-charts";
+import { ReceiptsChart, RevparTrendChart, SupplyChart, type TrendPoint } from "./_components/market-charts";
 
 export const dynamic = "force-dynamic";
 
-function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Kpi({
+  label,
+  value,
+  delta,
+  spark,
+  sparkColor,
+}: {
+  label: string;
+  value: string;
+  delta?: number | null;
+  spark?: (number | null)[];
+  sparkColor?: string;
+}) {
   return (
-    <div className="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">
-      <div className="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-        {label}
+    <div className="rounded-lg bg-surface p-4">
+      <div className="text-[11px] uppercase tracking-wider text-ink-muted">{label}</div>
+      <div className="mt-1 flex items-end justify-between gap-2">
+        <div>
+          <div className="text-xl font-semibold tabular-nums">{value}</div>
+          {delta != null && (
+            <div className={`mt-0.5 text-[12px] tabular-nums ${delta < 0 ? "text-hot" : "text-above"}`}>
+              {delta < 0 ? "▼" : "▲"} {fmtPct(delta, false)} YoY
+            </div>
+          )}
+        </div>
+        {spark && spark.some((v) => v != null) && (
+          <div className="w-24 shrink-0">
+            <Sparkline values={spark} color={sparkColor ?? "var(--color-ink-muted)"} height={34} />
+          </div>
+        )}
       </div>
-      <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
-      {sub && <div className="mt-0.5 text-[12px] text-zinc-500 dark:text-zinc-400">{sub}</div>}
     </div>
+  );
+}
+
+function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-lg bg-surface p-4">
+      <h2 className="text-[13px] font-medium">{title}</h2>
+      <div className="mt-3">{children}</div>
+    </section>
   );
 }
 
@@ -30,12 +64,11 @@ export default async function MarketPage() {
   const user = await requireApproved();
   if (!user) return <NotApproved />;
 
-  const [kpis, trend, decliners, hotRevenue, freshness] = await Promise.all([
+  const [kpis, trend, decliners, hotRevenue] = await Promise.all([
     getMarketKpis(),
     getMarketTrend(),
     getTopDecliners(),
     getReportedHotRevenue(),
-    getDataFreshness(),
   ]);
 
   const points: TrendPoint[] = trend.map((t) => ({
@@ -45,16 +78,11 @@ export default async function MarketPage() {
     totalRooms: t.totalRooms,
   }));
 
+  const declinerSeries = await getHotelSeries(decliners.map((d) => d.id));
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 animate-fade-up">
-      <div className="flex items-baseline justify-between gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Dallas County market</h1>
-        {freshness && (
-          <span className="text-[12px] text-zinc-500 dark:text-zinc-400">
-            Data through {fmtQuarter(freshness.year, freshness.quarter)}
-          </span>
-        )}
-      </div>
+      <h1 className="text-2xl font-semibold tracking-tight">Dallas County market</h1>
 
       {!kpis ? (
         <div className="mt-8">
@@ -69,84 +97,92 @@ export default async function MarketPage() {
             <Kpi
               label="Quarterly room receipts"
               value={fmtMoney(kpis.totalReceipts)}
-              sub={
-                kpis.receiptsYoyPct != null ? `${fmtPct(kpis.receiptsYoyPct)} YoY` : undefined
-              }
+              delta={kpis.receiptsYoyPct}
+              spark={points.map((p) => p.totalReceipts)}
+              sparkColor="var(--color-foreground)"
             />
-            <Kpi label="Median RevPAR (implied)" value={fmtRevpar(kpis.revparMedian)} />
+            <Kpi
+              label="Median RevPAR (implied)"
+              value={fmtRevpar(kpis.revparMedian)}
+              spark={points.map((p) => p.revparMedian)}
+              sparkColor="var(--color-benchmark)"
+            />
             <Kpi label="Active properties" value={fmtInt(kpis.propertyCount)} />
-            <Kpi label="Rooms (supply)" value={fmtInt(kpis.totalRooms)} />
+            <Kpi
+              label="Rooms (supply)"
+              value={fmtInt(kpis.totalRooms)}
+              spark={points.map((p) => p.totalRooms)}
+              sparkColor="var(--color-benchmark)"
+            />
+          </div>
+
+          <div className="mt-6 grid gap-3 lg:grid-cols-3">
+            <SectionCard title="Median RevPAR by quarter">
+              <RevparTrendChart data={points} />
+            </SectionCard>
+            <SectionCard title="Total room receipts by quarter">
+              <ReceiptsChart data={points} />
+            </SectionCard>
+            <SectionCard title="Room supply by quarter">
+              <SupplyChart data={points} />
+            </SectionCard>
           </div>
 
           <div className="mt-6 grid gap-3 lg:grid-cols-2">
-            <section className="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">
-              <h2 className="text-[13px] font-medium">Median RevPAR by quarter</h2>
-              <div className="mt-3">
-                <RevparTrendChart data={points} />
-              </div>
-            </section>
-            <section className="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">
-              <h2 className="text-[13px] font-medium">Total room receipts by quarter</h2>
-              <div className="mt-3">
-                <ReceiptsChart data={points} />
-              </div>
-            </section>
-          </div>
-
-          <div className="mt-6 grid gap-3 lg:grid-cols-2">
-            <section className="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">
-              <h2 className="text-[13px] font-medium">Steepest revenue decliners (trailing YoY)</h2>
-              <ul className="mt-2 divide-y divide-zinc-200 dark:divide-zinc-800">
+            <SectionCard title="Steepest revenue decliners (trailing YoY)">
+              <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
                 {decliners.length === 0 && (
-                  <li className="py-3 text-[13px] text-zinc-500">No scored hotels yet.</li>
+                  <li className="py-3 text-[13px] text-ink-muted">No scored hotels yet.</li>
                 )}
-                {decliners.map((d) => (
-                  <li key={d.id}>
-                    <Link
-                      href={`/hotels/${d.id}`}
-                      className="flex items-center justify-between gap-3 py-2 text-[13px] hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                    >
-                      <span className="min-w-0 truncate">
-                        {d.name}
-                        <span className="ml-2 text-zinc-500">{d.city}</span>
-                      </span>
-                      <span className="flex shrink-0 items-center gap-3 tabular-nums">
-                        <span className="text-red-600 dark:text-red-300">{fmtPct(toNum(d.yoy))}</span>
-                        <ScoreChip score={d.leadScore} />
-                      </span>
-                    </Link>
-                  </li>
-                ))}
+                {decliners.map((d) => {
+                  const spark = (declinerSeries.get(d.id) ?? []).map((p) =>
+                    impliedRevpar(p.receipts, p.rooms, p.year, p.quarter)
+                  );
+                  return (
+                    <li key={d.id}>
+                      <Link
+                        href={`/hotels/${d.id}`}
+                        scroll={false}
+                        className="-mx-2 flex items-center justify-between gap-3 rounded-md px-2 py-2 text-[13px] transition-colors hover:bg-surface-raised"
+                      >
+                        <span className="min-w-0 truncate">
+                          {d.name}
+                          <span className="ml-2 text-ink-muted">{d.city}</span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-3 tabular-nums">
+                          <span className="w-16">
+                            <Sparkline values={spark} color="var(--color-hot)" height={22} />
+                          </span>
+                          <span className="text-hot">{fmtPct(toNum(d.yoy))}</span>
+                          <ScoreChip score={d.leadScore} />
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
               </ul>
-            </section>
-            <section className="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">
-              <h2 className="text-[13px] font-medium">
-                Reported City of Dallas HOT revenue (fiscal years)
-              </h2>
-              <ul className="mt-2 divide-y divide-zinc-200 dark:divide-zinc-800">
+            </SectionCard>
+            <SectionCard title="Reported City of Dallas HOT revenue (fiscal years)">
+              <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
                 {hotRevenue.length === 0 && (
-                  <li className="py-3 text-[13px] text-zinc-500">
+                  <li className="py-3 text-[13px] text-ink-muted">
                     Run pipeline/socrata_market.py to pull the Comptroller series.
                   </li>
                 )}
                 {hotRevenue.map((r) => (
-                  <li
-                    key={`${r.geography}-${r.year}`}
-                    className="flex items-center justify-between py-2 text-[13px]"
-                  >
-                    <span className="text-zinc-500 dark:text-zinc-400">
-                      {r.geography.replace("city:", "City of ").replace("county:", "")} · FY
-                      {r.year}
+                  <li key={`${r.geography}-${r.year}`} className="flex items-center justify-between py-2 text-[13px]">
+                    <span className="text-ink-muted">
+                      {r.geography.replace("city:", "City of ").replace("county:", "")} · FY{r.year}
                     </span>
                     <span className="font-medium tabular-nums">{fmtMoney(r.taxCollected)}</span>
                   </li>
                 ))}
               </ul>
-              <p className="mt-3 text-[11px] text-zinc-500 dark:text-zinc-400">
+              <p className="mt-3 text-[11px] text-ink-muted">
                 Self-reported to the Comptroller (data.texas.gov). Context only — property-level
                 numbers come from SIFT filings.
               </p>
-            </section>
+            </SectionCard>
           </div>
         </>
       )}

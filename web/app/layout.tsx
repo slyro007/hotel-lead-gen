@@ -1,7 +1,13 @@
-import { ClerkProvider, Show, SignInButton, UserButton } from "@clerk/nextjs";
+import { ClerkProvider, Show, SignInButton } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import { cookies } from "next/headers";
+import { getDataFreshness } from "../db/queries/ingestion";
+import { fmtQuarter } from "../lib/format";
+import { AppSidebar } from "./_components/app-sidebar";
+import { AppMain } from "./_components/app-shell";
+import { SidebarProvider } from "./_components/sidebar-context";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -19,60 +25,43 @@ export const metadata: Metadata = {
   description: "Hotel acquisition leads from Texas occupancy tax data",
 };
 
-const NAV = [
-  { href: "/market", label: "Market" },
-  { href: "/hotels", label: "Hotels" },
-  { href: "/admin/ingestion", label: "Ingestion" },
-];
-
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const [cookieStore, freshness] = await Promise.all([cookies(), getDataFreshness()]);
+  const initialCollapsed = cookieStore.get("hh-sidebar")?.value === "collapsed";
+  const freshnessLabel = freshness ? fmtQuarter(freshness.year, freshness.quarter) : null;
+
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full">
         <ClerkProvider>
           {/* Signed-out: plain marketing chrome. */}
           <Show when="signed-out">
-            <header className="flex h-16 items-center justify-between gap-4 border-b border-zinc-200 px-4 sm:px-6 dark:border-zinc-800">
-              <Link
-                href="/"
-                className="text-sm font-semibold tracking-tight text-black dark:text-zinc-50"
-              >
-                Longhorn Houses <span className="font-normal text-zinc-500">Hotels</span>
-              </Link>
-              <SignInButton />
-            </header>
-            {children}
-          </Show>
-
-          {/* Signed-in: slim header nav (full sidebar shell arrives with the dashboard). */}
-          <Show when="signed-in">
-            <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-4 border-b border-zinc-200 bg-background px-4 sm:px-6 dark:border-zinc-800">
-              <div className="flex items-center gap-6">
+            <div className="flex min-h-dvh flex-col">
+              <header className="flex h-16 items-center justify-between gap-4 border-b border-border px-4 sm:px-6">
                 <Link
-                  href="/market"
+                  href="/"
                   className="text-sm font-semibold tracking-tight text-black dark:text-zinc-50"
                 >
-                  LHH <span className="font-normal text-zinc-500">Hotels</span>
+                  Longhorn Houses <span className="font-normal text-zinc-500">Hotels</span>
                 </Link>
-                <nav className="flex items-center gap-4">
-                  {NAV.map((item) => (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className="text-[13px] text-zinc-500 transition-colors hover:text-foreground dark:text-zinc-400"
-                    >
-                      {item.label}
-                    </Link>
-                  ))}
-                </nav>
+                <SignInButton />
+              </header>
+              {children}
+            </div>
+          </Show>
+
+          {/* Signed-in: sidebar rail + slim header shell. */}
+          <Show when="signed-in">
+            <SidebarProvider initialCollapsed={initialCollapsed}>
+              <div className="flex min-h-dvh">
+                <AppSidebar />
+                <AppMain freshness={freshnessLabel}>{children}</AppMain>
               </div>
-              <UserButton />
-            </header>
-            <main className="flex-1">{children}</main>
+            </SidebarProvider>
           </Show>
         </ClerkProvider>
       </body>

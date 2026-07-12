@@ -3,19 +3,64 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* Surfaces & lines — the flat zinc UI (DESIGN.md). */
+  --surface: #fafafa; /* zinc-50 — section boxes, cards */
+  --surface-raised: #ffffff;
+  --border: #e4e4e7; /* zinc-200 — hairlines */
+
+  /* Semantic meaning colors. Same hue always means the same thing:
+     hot/below = red, warm = amber, above-market = emerald,
+     benchmark/comp = blue, owner intel = violet. */
+  --hot: #dc2626; /* red-600 */
+  --warm: #f59e0b; /* amber-500 */
+  --above: #059669; /* emerald-600 */
+  --benchmark: #3b82f6; /* blue-500 */
+  --owner: #7c3aed; /* violet-600 */
+  --ink-muted: #71717a; /* zinc-500 */
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-hot: var(--hot);
+  --color-warm: var(--warm);
+  --color-above: var(--above);
+  --color-benchmark: var(--benchmark);
+  --color-owner: var(--owner);
+  --color-ink-muted: var(--ink-muted);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* One elevation, reserved for the single overlay surface (slide-over/modal). */
+  --shadow-overlay: 0 10px 40px -12px rgb(0 0 0 / 0.35), 0 4px 12px -6px rgb(0 0 0 / 0.2);
+
+  /* Motion — ease-out, 150–300ms, no bounce (DESIGN.md). */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 150ms;
+  --dur-med: 220ms;
+  --dur-slow: 300ms;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+
+    --surface: #18181b; /* zinc-900 */
+    --surface-raised: #101012;
+    --border: #27272a; /* zinc-800 */
+
+    --hot: #f87171; /* red-400 — lifts on dark */
+    --warm: #fbbf24; /* amber-400 */
+    --above: #34d399; /* emerald-400 */
+    --benchmark: #60a5fa; /* blue-400 */
+    --owner: #a78bfa; /* violet-400 */
+    --ink-muted: #a1a1aa; /* zinc-400 */
   }
 }
 
@@ -46,11 +91,54 @@ body {
 }
 
 .animate-fade-up {
-  animation: hlg-fade-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: hlg-fade-up 0.35s var(--ease-out) both;
+}
+
+/* Slide-over drawer entrance (detail panel over the explorer). */
+@keyframes hlg-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-slide-in-right {
+  animation: hlg-slide-in-right var(--dur-slow) var(--ease-out) both;
+}
+
+@keyframes hlg-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fade-in {
+  animation: hlg-fade-in var(--dur-med) var(--ease-out) both;
+}
+
+/* Skeleton shimmer for loading states. */
+@keyframes hlg-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.animate-skeleton {
+  animation: hlg-pulse 1.4s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-fade-up {
+  .animate-fade-up,
+  .animate-slide-in-right,
+  .animate-fade-in,
+  .animate-skeleton {
     animation: none;
   }
 }
