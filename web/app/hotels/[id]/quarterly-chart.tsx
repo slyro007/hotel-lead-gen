@@ -56,16 +56,18 @@ function DetailTooltip({
  * area shades exactly the below-market region.
  */
 export function RevparVsBenchmarkChart({ data }: { data: FilingPoint[] }) {
+  // `shortfall` = the benchmark value only in quarters where the hotel sits
+  // below it, else null. The Area fills from the baseline up to that value, so
+  // the red band appears exactly under the below-market quarters. Kept as a
+  // constant chart child (never conditionally rendered) so recharts' internal
+  // hook order stays stable across renders.
   const withShortfall = data.map((d) => ({
     ...d,
     shortfall:
       d.revpar != null && d.benchmarkRevpar != null && d.revpar < d.benchmarkRevpar
         ? d.benchmarkRevpar
-        : d.revpar ?? null,
-    hasGap:
-      d.revpar != null && d.benchmarkRevpar != null && d.revpar < d.benchmarkRevpar,
+        : null,
   }));
-  const anyGap = withShortfall.some((d) => d.hasGap);
 
   return (
     <ResponsiveContainer width="100%" height={240}>
@@ -74,19 +76,18 @@ export function RevparVsBenchmarkChart({ data }: { data: FilingPoint[] }) {
         <XAxis dataKey="period" {...axisProps} interval="preserveStartEnd" />
         <YAxis {...axisProps} tickFormatter={(v: number) => `$${v}`} width={52} />
         <Tooltip content={<DetailTooltip />} cursor={{ stroke: GRID }} />
-        {/* Red band between the hotel line and the benchmark, below-market only. */}
-        {anyGap && (
-          <Area
-            type="monotone"
-            dataKey="shortfall"
-            stroke="none"
-            fill="var(--color-hot)"
-            fillOpacity={0.16}
-            baseValue="dataMin"
-            activeDot={false}
-            isAnimationActive={false}
-          />
-        )}
+        {/* Red band under below-market quarters (nulls elsewhere → no fill). */}
+        <Area
+          type="monotone"
+          dataKey="shortfall"
+          stroke="none"
+          fill="var(--color-hot)"
+          fillOpacity={0.16}
+          baseValue="dataMin"
+          connectNulls={false}
+          activeDot={false}
+          isAnimationActive={false}
+        />
         <Line
           type="monotone"
           dataKey="benchmarkRevpar"

@@ -123,6 +123,23 @@ body {
   animation: hlg-fade-in var(--dur-med) var(--ease-out) both;
 }
 
+/* Modal/dossier entrance — scale + fade, ends fully opaque (fill: both) so it
+   stays solid even if the tree re-renders during the animation. */
+@keyframes hlg-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-modal-in {
+  animation: hlg-modal-in var(--dur-med) var(--ease-out) both;
+}
+
 /* Skeleton shimmer for loading states. */
 @keyframes hlg-pulse {
   50% {

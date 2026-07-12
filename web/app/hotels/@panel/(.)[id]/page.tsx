@@ -24,7 +24,7 @@ export default async function InterceptedHotelDetail({
   if (!data) notFound();
 
   return (
-    <PanelShell>
+    <PanelShell title={data.hotel.locationName ?? "Hotel detail"}>
       <HotelDetail data={data} variant="panel" />
     </PanelShell>
   );

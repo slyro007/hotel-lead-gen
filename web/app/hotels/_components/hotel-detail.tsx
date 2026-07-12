@@ -19,9 +19,17 @@ interface BreakdownComponent {
   rule: string;
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  id,
+  children,
+}: {
+  title: string;
+  id?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="rounded-lg bg-surface p-4">
+    <section id={id} data-toc={id ? title : undefined} className="scroll-mt-4 rounded-lg bg-surface p-4">
       <h2 className="text-[13px] font-medium">{title}</h2>
       <div className="mt-3">{children}</div>
     </section>
@@ -59,7 +67,7 @@ export function HotelDetail({
     : null;
 
   const performance = (
-    <Section title="Performance">
+    <Section id="performance" title="Performance">
       <Fact label="Lead score" value={score?.leadScore ?? "—"} />
       <Fact label="RevPAR index" value={idx != null ? idx.toFixed(0) : "—"} />
       <Fact label="Trailing 4Q RevPAR" value={fmtRevpar(toNum(score?.trailingRevpar4q))} />
@@ -71,7 +79,7 @@ export function HotelDetail({
   );
 
   const ownerSection = (
-    <Section title="Owner (DCAD)">
+    <Section id="owner" title="Owner (DCAD)">
       {owner ? (
         <>
           <Fact label="Owner" value={owner.ownerName ?? "—"} />
@@ -97,7 +105,7 @@ export function HotelDetail({
   );
 
   const taxpayer = (
-    <Section title="Taxpayer">
+    <Section id="taxpayer" title="Taxpayer">
       <Fact label="Current filer" value={hotel.currentTaxpayerName ?? "—"} />
       <Fact label="Taxpayer #" value={hotel.currentTaxpayerNumber ?? "—"} />
       {hotel.priorTaxpayerNumbers.length > 0 && (
@@ -107,7 +115,7 @@ export function HotelDetail({
   );
 
   const revparChart = (
-    <Section title="Implied RevPAR vs comp-set median">
+    <Section id="revpar" title="Implied RevPAR vs comp-set median">
       {points.length ? (
         <RevparVsBenchmarkChart data={points} />
       ) : (
@@ -121,7 +129,7 @@ export function HotelDetail({
   );
 
   const receiptsChart = (
-    <Section title="Quarterly room receipts">
+    <Section id="receipts" title="Quarterly room receipts">
       {points.length ? (
         <ReceiptsBarChart data={points} />
       ) : (
@@ -131,7 +139,7 @@ export function HotelDetail({
   );
 
   const quarterlyTable = points.length ? (
-    <Section title="Quarterly figures">
+    <Section id="quarterly" title="Quarterly figures">
       <div className="overflow-x-auto">
         <table className="w-full text-[12px] tabular-nums">
           <thead>
@@ -162,7 +170,7 @@ export function HotelDetail({
   ) : null;
 
   const scoreBreakdown = (
-    <Section title="Score breakdown">
+    <Section id="breakdown" title="Score breakdown">
       {breakdown?.components ? (
         <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {Object.entries(breakdown.components).map(([name, c]) => (
