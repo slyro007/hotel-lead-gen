@@ -50,8 +50,9 @@ ON CONFLICT (taxpayer_number, location_key, year, quarter) DO UPDATE SET
 
 
 def is_dallas(rec: dict) -> bool:
+    # Comptroller 3-digit county code: Dallas = 057.
     county = (rec.get("location_county") or "").strip().lower()
-    return "dallas" in county or county == "57"
+    return "dallas" in county or county.lstrip("0") == "57"
 
 
 def main() -> None:

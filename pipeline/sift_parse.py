@@ -1,87 +1,74 @@
-"""Parse a raw Comptroller SIFT hotel tax receipts file into normalized JSON.
+"""Parse a Comptroller SIFT quarterly hotel receipts file (HOTyyQn.CSV) to JSON.
 
-The exact SIFT export format is unknown until first download, so the parser is
-adaptive: it sniffs the delimiter (CSV/TSV/pipe) and maps columns by fuzzy
-header matching against HEADER_MAP. If the real file disagrees, adjust
-HEADER_MAP at the top of this file — nothing else should need to change.
+The SIFT export is a HEADERLESS positional CSV — layout confirmed against the
+"Hotel Quarterly File Record Layout" doc shipped inside each download:
+
+    0  Taxpayer Number        8  Location Number      16 Unit Capacity (rooms)
+    1  Taxpayer Name          9  Location Name        17 Responsibility Begin Date
+    2  Taxpayer Address      10  Location Address     18 Responsibility End Date
+    3  Taxpayer City         11  Location City        19 Reporting Quarter ("2025Q1")
+    4  Taxpayer State        12  Location State       20 Filer Type (50=monthly, 60=quarterly)
+    5  Taxpayer Zip          13  Location Zip         21 Total Room Receipts
+    6  Taxpayer County       14  Location County      22 Taxable Receipts
+    7  Taxpayer Phone        15  Location Phone
+
+Monthly files (HOTyymm.CSV) share the layout with a YYYYMMDD period at col 19,
+but the quarterly file already contains monthly filers rolled up to the
+quarter (verified numerically), so ONLY quarterly files should be ingested.
+
+County is the Comptroller's 3-digit county code — Dallas = 057.
 
 Usage:
-    python pipeline/sift_parse.py data/downloads/sift/hotel_receipts_2026Q1.csv
-    python pipeline/sift_parse.py <file> --county dallas   # filter while parsing (default: keep all)
-    python pipeline/sift_parse.py <file> --peek            # print detected header mapping and 3 rows, write nothing
-
-Output: data/parsed/sift_<file-stem>.json — a list of filing records with
-canonical field names, ready for sync_filings.py.
+    python pipeline/sift_parse.py data/downloads/sift/HOT26Q1.CSV
+    python pipeline/sift_parse.py --all            # every HOT*Q*.CSV in the drop folder
+    python pipeline/sift_parse.py <file> --peek    # print 3 parsed rows, write nothing
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import glob
 import json
 import logging
 import os
 import re
-import sys
 
-from common import PARSED_DIR, ensure_dirs, location_key
+from common import DOWNLOADS_DIR, PARSED_DIR, ensure_dirs, location_key
 
 log = logging.getLogger("sift_parse")
 
-# canonical field -> lowercase substrings to match against file headers, in
-# priority order. First header containing a candidate wins.
-HEADER_MAP: dict[str, list[str]] = {
-    "taxpayer_number": ["taxpayer number", "taxpayer no", "taxpayer_number", "taxpayer id"],
-    "taxpayer_name": ["taxpayer name", "taxpayer_name"],
-    "location_name": ["location name", "location_name", "outlet name", "hotel name"],
-    "location_address": ["location address", "location_address", "outlet address", "street address", "address"],
-    "location_city": ["location city", "location_city", "outlet city", "city"],
-    "location_state": ["location state", "location_state", "state"],
-    "location_zip": ["location zip", "location_zip", "zip"],
-    "location_county": ["location county", "county code", "location_county", "county"],
-    "rooms": ["number of rooms", "room count", "units", "capacity", "rooms"],
-    "room_receipts": ["total room receipts", "room receipt", "gross receipts", "total receipts"],
-    "taxable_receipts": ["taxable receipt", "taxable_receipts"],
-    # period: either explicit year/quarter columns, or a filing-period end date
-    "year": ["report year", "filing year", "obligation end date year", "year"],
-    "quarter": ["report quarter", "filing quarter", "quarter"],
-    "period_end": ["obligation end date", "period end", "filing period", "end date"],
+SIFT_DIR = os.path.join(DOWNLOADS_DIR, "sift")
+
+COL = {
+    "taxpayer_number": 0,
+    "taxpayer_name": 1,
+    "location_number": 8,
+    "location_name": 9,
+    "location_address": 10,
+    "location_city": 11,
+    "location_state": 12,
+    "location_zip": 13,
+    "location_county": 14,
+    "rooms": 16,
+    "resp_begin": 17,
+    "resp_end": 18,
+    "period": 19,
+    "filer_type": 20,
+    "room_receipts": 21,
+    "taxable_receipts": 22,
 }
-
-# Texas county numbers: Dallas = 57 in the Comptroller's county-code scheme.
-# The file may carry names or codes — we match either.
-COUNTY_CODES = {"dallas": "57"}
+MIN_COLS = 23
 
 
-def sniff_dialect(sample: str) -> csv.Dialect:
-    try:
-        return csv.Sniffer().sniff(sample, delimiters=",\t|")
-    except csv.Error:
-        class D(csv.excel):
-            delimiter = ","
-        return D()
+def cell(row: list[str], name: str) -> str:
+    idx = COL[name]
+    return row[idx].strip() if idx < len(row) else ""
 
 
-def map_headers(headers: list[str]) -> dict[str, int]:
-    """Return canonical field -> column index. Unmatched fields are absent."""
-    lowered = [h.strip().lower() for h in headers]
-    mapping: dict[str, int] = {}
-    claimed: set[int] = set()
-    for field, candidates in HEADER_MAP.items():
-        for cand in candidates:
-            hit = next((i for i, h in enumerate(lowered) if cand in h and i not in claimed), None)
-            if hit is not None:
-                mapping[field] = hit
-                claimed.add(hit)
-                break
-    return mapping
-
-
-def to_money(v: str | None) -> float | None:
-    if v is None:
-        return None
+def to_money(v: str) -> float | None:
     s = re.sub(r"[,$\s]", "", v)
-    if s in ("", "-"):
+    if not s or s == "-":
         return None
     try:
         return float(s)
@@ -89,106 +76,78 @@ def to_money(v: str | None) -> float | None:
         return None
 
 
-def to_int(v: str | None) -> int | None:
+def to_int(v: str) -> int | None:
     m = to_money(v)
     return int(m) if m is not None else None
 
 
-def derive_period(rec: dict) -> tuple[int | None, int | None]:
-    if rec.get("year") and rec.get("quarter"):
-        return to_int(rec["year"]), to_int(rec["quarter"])
-    end = rec.get("period_end") or ""
-    m = re.search(r"(\d{4})-(\d{2})-\d{2}", end) or re.search(r"(\d{2})/\d{2}/(\d{4})", end)
-    if m:
-        if len(m.group(1)) == 4:
-            year, month = int(m.group(1)), int(m.group(2))
-        else:
-            year, month = int(m.group(2)), int(m.group(1))
-        return year, (month - 1) // 3 + 1
-    return None, None
-
-
-def county_matches(value: str | None, county: str) -> bool:
-    if not value:
-        return False
-    v = value.strip().lower()
-    return county in v or v == COUNTY_CODES.get(county, "__none__")
+def parse_file(path: str) -> tuple[list[dict], int]:
+    records, skipped = [], 0
+    with open(path, newline="", encoding="latin-1", errors="replace") as f:
+        for row in csv.reader(f):
+            if len(row) < MIN_COLS:
+                skipped += 1
+                continue
+            period = cell(row, "period")
+            m = re.fullmatch(r"(\d{4})Q([1-4])", period)
+            if not m:
+                # monthly-format period (YYYYMMDD) or garbage — quarterly files only
+                skipped += 1
+                continue
+            records.append({
+                "taxpayer_number": cell(row, "taxpayer_number"),
+                "taxpayer_name": cell(row, "taxpayer_name") or None,
+                "location_number": cell(row, "location_number") or None,
+                "location_name": cell(row, "location_name") or None,
+                "location_address": cell(row, "location_address") or None,
+                "location_city": cell(row, "location_city") or None,
+                "location_state": cell(row, "location_state") or "TX",
+                "location_zip": cell(row, "location_zip") or None,
+                "location_county": cell(row, "location_county") or None,
+                "location_key": location_key(cell(row, "location_zip"), cell(row, "location_address")),
+                "year": int(m.group(1)),
+                "quarter": int(m.group(2)),
+                "rooms": to_int(cell(row, "rooms")),
+                "resp_end": cell(row, "resp_end") or None,
+                "filer_type": cell(row, "filer_type") or None,
+                "room_receipts": to_money(cell(row, "room_receipts")),
+                "taxable_receipts": to_money(cell(row, "taxable_receipts")),
+                "source_file": os.path.basename(path),
+            })
+    return records, skipped
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    p = argparse.ArgumentParser(description="Parse a SIFT hotel receipts file to JSON.")
-    p.add_argument("file")
-    p.add_argument("--county", help="keep only rows in this county (e.g. dallas)")
-    p.add_argument("--peek", action="store_true", help="show header mapping + sample rows, write nothing")
+    p = argparse.ArgumentParser(description="Parse SIFT quarterly hotel receipts files.")
+    p.add_argument("file", nargs="?", help="a single HOTyyQn.CSV")
+    p.add_argument("--all", action="store_true", help="parse every HOT*Q*.CSV in data/downloads/sift/")
+    p.add_argument("--peek", action="store_true", help="print 3 parsed rows, write nothing")
     args = p.parse_args()
     ensure_dirs()
 
-    with open(args.file, newline="", encoding="utf-8", errors="replace") as f:
-        sample = f.read(64 * 1024)
-        f.seek(0)
-        dialect = sniff_dialect(sample)
-        reader = csv.reader(f, dialect)
-        headers = next(reader)
-        mapping = map_headers(headers)
+    if args.all:
+        files = sorted(glob.glob(os.path.join(SIFT_DIR, "HOT*Q*.CSV")) +
+                       glob.glob(os.path.join(SIFT_DIR, "HOT*q*.csv")))
+    elif args.file:
+        files = [args.file]
+    else:
+        p.error("give a file or --all")
 
-        required = {"taxpayer_number", "location_address", "room_receipts"}
-        missing = required - mapping.keys()
-        if missing:
-            log.error("Could not map required columns: %s", sorted(missing))
-            log.error("File headers were: %s", headers)
-            log.error("Adjust HEADER_MAP in pipeline/sift_parse.py and re-run.")
-            sys.exit(1)
-
+    for path in files:
+        records, skipped = parse_file(path)
         if args.peek:
-            log.info("Detected delimiter: %r", dialect.delimiter)
-            for field, idx in sorted(mapping.items()):
-                log.info("  %-18s <- col %d %r", field, idx, headers[idx])
-            for n, row in enumerate(reader):
-                if n >= 3:
-                    break
-                log.info("row %d: %s", n, row)
-            return
-
-        records, skipped = [], 0
-        for row in reader:
-            if not row or len(row) < len(headers) // 2:
-                continue
-            raw = {field: (row[idx].strip() if idx < len(row) else None)
-                   for field, idx in mapping.items()}
-            year, quarter = derive_period(raw)
-            if not year or not quarter:
-                skipped += 1
-                continue
-            if args.county and not county_matches(raw.get("location_county"), args.county.lower()):
-                skipped += 1
-                continue
-            records.append({
-                "taxpayer_number": raw.get("taxpayer_number"),
-                "taxpayer_name": raw.get("taxpayer_name"),
-                "location_name": raw.get("location_name"),
-                "location_address": raw.get("location_address"),
-                "location_city": raw.get("location_city"),
-                "location_state": raw.get("location_state") or "TX",
-                "location_zip": raw.get("location_zip"),
-                "location_county": raw.get("location_county"),
-                "location_key": location_key(raw.get("location_zip"), raw.get("location_address")),
-                "year": year,
-                "quarter": quarter,
-                "rooms": to_int(raw.get("rooms")),
-                "room_receipts": to_money(raw.get("room_receipts")),
-                "taxable_receipts": to_money(raw.get("taxable_receipts")),
-                "source_file": os.path.basename(args.file),
-            })
-
-    stem = os.path.splitext(os.path.basename(args.file))[0]
-    out_path = os.path.join(PARSED_DIR, f"sift_{stem}.json")
-    with open(out_path, "w") as f:
-        json.dump(records, f)
-    quarters = sorted({(r["year"], r["quarter"]) for r in records})
-    log.info("Parsed %d filings (%d skipped) across quarters %s -> %s",
-             len(records), skipped,
-             [f"{y}Q{q}" for y, q in quarters], out_path)
+            for r in records[:3]:
+                log.info("%s", json.dumps(r, indent=1))
+            log.info("%s: %d rows parsed, %d skipped", os.path.basename(path), len(records), skipped)
+            continue
+        stem = os.path.splitext(os.path.basename(path))[0]
+        out_path = os.path.join(PARSED_DIR, f"sift_{stem}.json")
+        with open(out_path, "w") as f:
+            json.dump(records, f)
+        quarters = sorted({(r["year"], r["quarter"]) for r in records})
+        log.info("%s: %d filings (%d skipped) %s -> %s", os.path.basename(path),
+                 len(records), skipped, [f"{y}Q{q}" for y, q in quarters], out_path)
 
 
 if __name__ == "__main__":

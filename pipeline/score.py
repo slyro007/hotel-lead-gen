@@ -146,14 +146,15 @@ def pick_compset(benchmarks: dict, year: int, quarter: int, city: str | None,
 
 # ---------------------------------------------------------------- per-hotel math
 
-def trailing_revpar(filings: list[dict], end_qi: int, rooms: int, n: int = 4) -> tuple[float | None, float | None]:
-    """(revpar, revenue) over up to n quarters ending at end_qi (inclusive)."""
+def trailing_revpar(filings: list[dict], end_qi: int, rooms: int, n: int = 4
+                    ) -> tuple[float | None, float | None, int]:
+    """(revpar, revenue, days) over up to n quarters ending at end_qi (inclusive)."""
     window = [f for f in filings if end_qi - n < f["qi"] <= end_qi and f["receipts"]]
     if not window or not rooms:
-        return None, None
+        return None, None, 0
     revenue = sum(f["receipts"] for f in window)
     day_count = sum(f["days"] for f in window)
-    return revenue / (rooms * day_count), revenue
+    return revenue / (rooms * day_count), revenue, day_count
 
 
 def ols_slope_pct(filings: list[dict], end_qi: int, rooms: int, n: int = 8) -> float | None:
@@ -183,8 +184,8 @@ def score_hotel(h: dict, filings: list[dict], benchmarks: dict,
     if not rooms or rooms < MIN_ROOMS:
         return None
 
-    t_revpar, t_revenue = trailing_revpar(filings, end_qi, rooms)
-    prior_revpar, prior_revenue = trailing_revpar(filings, end_qi - 4, rooms)
+    t_revpar, t_revenue, t_days = trailing_revpar(filings, end_qi, rooms)
+    prior_revpar, prior_revenue, prior_days = trailing_revpar(filings, end_qi - 4, rooms)
     latest = next((f for f in sorted(filings, key=lambda x: -x["qi"]) if f["receipts"]), None)
     latest_revpar = latest["receipts"] / (rooms * latest["days"]) if latest else None
 
@@ -199,14 +200,16 @@ def score_hotel(h: dict, filings: list[dict], benchmarks: dict,
         # trailing index vs the as-of quarter's comp median (both same segment)
         revpar_index = 100 * t_revpar / bm["median"]
 
-    # trend
+    # trend — windows can be unequal length when history is short (e.g. only 6
+    # quarters ingested), so compare revenue *per day* and require the prior
+    # window to cover at least ~2 quarters before trusting a YoY number.
     yoy = None
-    if t_revenue and prior_revenue:
-        yoy = 100 * (t_revenue / prior_revenue - 1)
+    if t_revenue and prior_revenue and t_days and prior_days >= 180:
+        yoy = 100 * ((t_revenue / t_days) / (prior_revenue / prior_days) - 1)
     slope = ols_slope_pct(filings, end_qi, rooms)
 
     # recovery vs 2019
-    revpar_2019, _ = trailing_revpar(filings, quarter_index(2019, 4), rooms)
+    revpar_2019, _, _ = trailing_revpar(filings, quarter_index(2019, 4), rooms)
     recovery = t_revpar / revpar_2019 if (t_revpar and revpar_2019) else None
 
     # distress: stopped filing (vs dataset's own latest quarter)

@@ -16,6 +16,7 @@ import argparse
 import csv
 import io
 import logging
+import time
 
 import requests
 
@@ -49,30 +50,46 @@ def main() -> None:
 
         run_id = start_run(conn, "geocode", params={"count": len(rows)})
         try:
-            buf = io.StringIO()
-            w = csv.writer(buf)
-            for r in rows:
-                w.writerow([r[0], r[1], r[2] or "", r[3] or "TX", r[4] or ""])
-            resp = requests.post(
-                CENSUS_URL,
-                files={"addressFile": ("hotels.csv", buf.getvalue(), "text/csv")},
-                data={"benchmark": "Public_AR_Current"},
-                timeout=300,
-            )
-            resp.raise_for_status()
-
             matched = 0
-            for out in csv.reader(io.StringIO(resp.text)):
-                # columns: id, input addr, match flag, match type, matched addr, "lng,lat", tigerline, side
-                if len(out) >= 6 and out[2] == "Match" and out[5]:
-                    lng, lat = out[5].split(",")
-                    conn.execute(
-                        """UPDATE hotels SET latitude=%s, longitude=%s,
-                           geocode_source='census', updated_at=now() WHERE id=%s""",
-                        (float(lat), float(lng), out[0]),
-                    )
-                    matched += 1
-            conn.commit()
+            CHUNK = 50  # the batch endpoint 502s on larger uploads
+            for start in range(0, len(rows), CHUNK):
+                chunk = rows[start:start + CHUNK]
+                buf = io.StringIO()
+                w = csv.writer(buf)
+                for r in chunk:
+                    w.writerow([r[0], r[1], r[2] or "", r[3] or "TX", r[4] or ""])
+                resp = None
+                for attempt in range(4):
+                    try:
+                        resp = requests.post(
+                            CENSUS_URL,
+                            files={"addressFile": ("hotels.csv", buf.getvalue(), "text/csv")},
+                            data={"benchmark": "Public_AR_Current"},
+                            timeout=300,
+                        )
+                        resp.raise_for_status()
+                        break
+                    except requests.RequestException as e:
+                        resp = None
+                        log.warning("chunk %d attempt %d failed (%s)", start // CHUNK, attempt + 1, e)
+                        time.sleep(8 * (attempt + 1))
+                if resp is None:
+                    log.warning("chunk %d skipped after retries — re-run geocode.py later", start // CHUNK)
+                    continue
+
+                for out in csv.reader(io.StringIO(resp.text)):
+                    # id, input addr, match flag, match type, matched addr, "lng,lat", tigerline, side
+                    if len(out) >= 6 and out[2] == "Match" and out[5]:
+                        lng, lat = out[5].split(",")
+                        conn.execute(
+                            """UPDATE hotels SET latitude=%s, longitude=%s,
+                               geocode_source='census', updated_at=now() WHERE id=%s""",
+                            (float(lat), float(lng), out[0]),
+                        )
+                        matched += 1
+                conn.commit()
+                log.info("chunk %d/%d done (%d matched so far)",
+                         start // CHUNK + 1, (len(rows) + CHUNK - 1) // CHUNK, matched)
             finish_run(conn, run_id, processed=len(rows), updated=matched)
             log.info("Geocoded %d/%d hotels (%.0f%%).", matched, len(rows), 100 * matched / len(rows))
         except Exception as e:

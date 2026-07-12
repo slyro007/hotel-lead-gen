@@ -28,7 +28,7 @@ manual adjudication — never guessed into the DB).
 ## Pipeline stages (run order)
 
 ```bash
-.venv/bin/python pipeline/sift_parse.py data/downloads/sift/<file>   # 1. raw file → data/parsed/*.json
+.venv/bin/python pipeline/sift_parse.py --all                        # 1. HOT*Q*.CSV → data/parsed/*.json
 .venv/bin/python pipeline/sync_filings.py                            # 2. upsert hotel_filings (Dallas County only)
 .venv/bin/python pipeline/build_hotels.py                            # 3. canonicalize hotels, backfill hotel_id
 .venv/bin/python pipeline/geocode.py                                 # 4. Census batch geocoder → lat/lng
@@ -64,8 +64,11 @@ Web: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`,
 
 ## Quarterly refresh runbook
 
-1. Log into SIFT (data-secure.comptroller.texas.gov), download the latest hotel
-   tax receipts file into `data/downloads/sift/`.
+1. Log into SIFT (data-secure.comptroller.texas.gov) → Public Files → download
+   the new quarter's `HOTyyQn` ZIP; put `HOTyyQn.CSV` in `data/downloads/sift/`.
+   Quarterly files ONLY — they already roll up monthly filers (verified;
+   filer_type 50 = monthly, 60 = quarterly). Layout: headerless positional CSV,
+   23 cols, county code 057 = Dallas (doc in the ZIP).
 2. Run stages 1–3, then 8 (`score.py` recomputes benchmarks + scores).
    Stages 4–5 only touch rows that are new (null lat/lng, null classified_at).
 3. Refresh DCAD (stage 6) once a year after the appraisal roll certifies (~July);
